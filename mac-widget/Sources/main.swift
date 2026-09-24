@@ -660,18 +660,20 @@ final class WidgetController: NSObject {
 
         func quotaRow(_ label: String) -> (BarTrack, NSTextField, NSTextField) {
             let lab = L(label, 11, .regular, C(0xFFFFFF, 0.92))
-            lab.setContentCompressionResistancePriority(.required, for: .horizontal)
+            // 标签固定列宽: "5小时"/"本周"字数不同, 不固定则两行进度条起点错开
+            lab.widthAnchor.constraint(equalToConstant: 40).isActive = true
             let bar = BarTrack(width: cfg.trackW)
             let pct = L("--", 12, .semibold, C(0xEAF2FB))
-            pct.setContentCompressionResistancePriority(.required, for: .horizontal)
+            pct.alignment = .right
+            pct.widthAnchor.constraint(equalToConstant: 48).isActive = true
             let rst = L("", 10, .regular, C(0xFFFFFF, 0.85))
             rst.setContentCompressionResistancePriority(.required, for: .horizontal)
             let r = hRow(12)
             r.addArrangedSubview(lab)
             r.addArrangedSubview(bar)
             r.addArrangedSubview(pct)
-            r.addArrangedSubview(rst)
             r.addArrangedSubview(spacer())
+            r.addArrangedSubview(rst)   // 重置时间贴行尾, 对齐 Windows 版
             cardGLM.add(r)
             return (bar, pct, rst)
         }
