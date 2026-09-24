@@ -2,6 +2,8 @@
 
 一个纯 PowerShell + WPF 的 Windows 置顶桌面小组件，零第三方依赖（Windows PowerShell 5.1 开箱即用），聚合四路信息源：
 
+> 🍎 **Mac 用户？** 本仓库 [`mac-widget/`](mac-widget/README.md) 目录是纯 AppKit 的 macOS 原生移植版（swiftc 直接编译，同样零第三方依赖），功能对齐，B站板块改走 wbi 签名 API + Cookie。
+
 | 板块 | 内容 | 数据源 | 节奏 |
 |---|---|---|---|
 | GLM 额度 | Coding Plan 5小时窗 / 本周用量双进度条 + 剩余点数 | open.bigmodel.cn 配额接口 | 1 分钟 |

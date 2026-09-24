@@ -1,0 +1,13 @@
+{
+  "Key": "在这里填入你的GLM_API_Key",
+  "Url": "https://open.bigmodel.cn/api/monitor/usage/quota/limit",
+  "Minutes": 1,
+  "TrackW": 340,
+  "BiliCookie": "SESSDATA=xxx; buvid3=xxx  (浏览器F12→网络→任意bilibili请求→请求头Cookie整串复制)",
+  "BiliUps": [
+    { "uid": "520155988", "name": "示例UP主一" },
+    { "uid": "90183256", "name": "示例UP主二" }
+  ],
+  "BiliTickMin": 144,
+  "AnthMin": 1440
+}
