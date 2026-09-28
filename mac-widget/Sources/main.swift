@@ -1497,7 +1497,7 @@ final class WidgetController: NSObject {
     private func translateLines(_ lines: [String], _ done: @escaping ([String]) -> Void) {
         guard !cfg.key.isEmpty, !lines.isEmpty else { done([]); return }
         let joined = lines.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
-        let prompt = "Translate these research article titles from English to Chinese. Output only the translations, one per line, keeping the same numbering."
+        let prompt = "Translate these research article titles from English to Chinese. Keep product names like Claude in English. Output only the translations, one per line, keeping the same numbering."
         let body: [String: Any] = [
             "model": "glm-4-flash",
             "messages": [["role": "user", "content": prompt + "\n" + joined]],
@@ -1514,7 +1514,7 @@ final class WidgetController: NSObject {
                 for line in content.components(separatedBy: "\n") {
                     if let m = firstMatch(line, "^\\s*(\\d+)[\\.、]\\s*(.+)$"),
                        let i = Int(m[0]), i >= 1, i <= lines.count {
-                        out[i - 1] = m[1].trimmingCharacters(in: .whitespaces)
+                        out[i - 1] = m[1].trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "克劳德", with: "Claude")
                     }
                 }
                 done(out)
