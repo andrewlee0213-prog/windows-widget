@@ -61,23 +61,43 @@ enum SingleInstance {
 
 // MARK: - HTTP / 正则 / 编码工具
 
+// 不走系统代理的会话 (V2RayU 分流会把 cngold.org 甩给远端节点导致超时, 国内源必须直连)
+let directSession: URLSession = {
+    let c = URLSessionConfiguration.default
+    c.connectionProxyDictionary = [:]
+    return URLSession(configuration: c)
+}()
+
+// 国内源直连优先、失败回退代理; 境外源 (Anthropic) 代理优先、失败回退直连
+func performRequest(_ r: URLRequest, proxyFirst: Bool, _ done: @escaping (Data?, Error?) -> Void) {
+    let primary = proxyFirst ? URLSession.shared : directSession
+    let fallback = proxyFirst ? directSession : URLSession.shared
+    primary.dataTask(with: r) { d, _, e in
+        if d == nil, e != nil {
+            fallback.dataTask(with: r) { d2, _, e2 in done(d2, e2 ?? e) }.resume()
+        } else {
+            done(d, e)
+        }
+    }.resume()
+}
+
 func httpGet(_ url: URL, headers: [String: String] = [:], timeout: TimeInterval = 15,
-             _ done: @escaping (Data?, Error?) -> Void) {
+             proxyFirst: Bool = false, _ done: @escaping (Data?, Error?) -> Void) {
     var r = URLRequest(url: url)
     r.timeoutInterval = timeout
     for (k, v) in headers { r.setValue(v, forHTTPHeaderField: k) }
-    URLSession.shared.dataTask(with: r) { d, _, e in done(d, e) }.resume()
+    performRequest(r, proxyFirst: proxyFirst, done)
 }
 
 func httpPostJSON(_ url: URL, body: [String: Any], headers: [String: String], timeout: TimeInterval = 60,
-                  _ done: @escaping (Data?, Error?) -> Void) {
+                  proxyFirst: Bool = false, _ done: @escaping (Data?, Error?) -> Void) {
     var r = URLRequest(url: url)
     r.timeoutInterval = timeout
     r.httpMethod = "POST"
     r.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
     for (k, v) in headers { r.setValue(v, forHTTPHeaderField: k) }
     r.httpBody = try? JSONSerialization.data(withJSONObject: body)
-    URLSession.shared.dataTask(with: r) { d, _, e in done(d, e) }.resume()
+    performRequest(r, proxyFirst: proxyFirst, done)
 }
 
 let chromeUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
@@ -1295,7 +1315,7 @@ final class WidgetController: NSObject {
             oilInfo = info
             oilPrice.stringValue = info.price
             oilNote.stringValue = info.note
-            oilNext.stringValue = info.next
+            if !info.next.isEmpty { oilNext.stringValue = info.next }   // 预估标题消失时保留上次内容 (独立降级)
             updOil.stringValue = fmtHM.string(from: Date()) + " 更新"
             updOil.textColor = C(0xFFFFFF, 0.80)
             oilTimer24h()
@@ -1583,7 +1603,7 @@ final class WidgetController: NSObject {
         guard !anthBusy else { done(false); return }
         anthBusy = true
         guard let u = URL(string: "https://www.anthropic.com/research") else { anthBusy = false; done(false); return }
-        httpGet(u, headers: ["User-Agent": chromeUA], timeout: 20) { d, e in
+        httpGet(u, headers: ["User-Agent": chromeUA], timeout: 20, proxyFirst: true) { d, e in
             guard let d, let html = String(data: d, encoding: .utf8) else {
                 logLine("anth fetch error: \(e?.localizedDescription ?? "nil")")
                 DispatchQueue.main.async { self.anthBusy = false; done(false) }
