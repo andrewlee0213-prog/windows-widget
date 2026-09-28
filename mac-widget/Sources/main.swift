@@ -18,6 +18,7 @@ func C(_ hex: UInt32, _ a: CGFloat = 1) -> NSColor {
 let fmtHM = DateFormatter.make("HH:mm")
 let fmtMDHM = DateFormatter.make("MM-dd HH:mm")
 let fmtYMD = DateFormatter.make("yyyy-MM-dd")
+let fmtZhReset = DateFormatter.make("M月d日 HH:mm")
 
 extension DateFormatter {
     static func make(_ f: String) -> DateFormatter {
@@ -562,7 +563,6 @@ final class WidgetController: NSObject {
     var menuDock: NSMenuItem!
     var pullTab: NSView!
 
-    let weekChars = Array("日一二三四五六")
 
     // ---- 启动 ----
 
@@ -1100,8 +1100,7 @@ final class WidgetController: NSObject {
         if let ms = item.reset {
             let d = Date(timeIntervalSince1970: ms / 1000)
             if weekly {
-                let wd = weekChars[Calendar.current.component(.weekday, from: d) - 1]
-                rst.stringValue = "周\(wd) \(fmtHM.string(from: d))"
+                rst.stringValue = fmtZhReset.string(from: d)   // 具体日期比"周几"更直观
             } else {
                 rst.stringValue = fmtHM.string(from: d) + " 重置"
             }
