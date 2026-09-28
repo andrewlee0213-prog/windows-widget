@@ -100,6 +100,14 @@ func allMatches(_ text: String, _ pattern: String) -> [[String]] {
     }
 }
 
+// Anthropic 标题里 Claude / agent(AI 智能体义) 保留英文, 不翻成 克劳德/智能体/代理人
+func keepEnglishTerms(_ s: String) -> String {
+    s.replacingOccurrences(of: "克劳德", with: "Claude")
+        .replacingOccurrences(of: "多智能体", with: "multi-agent")
+        .replacingOccurrences(of: "智能体", with: "agent")
+        .replacingOccurrences(of: "代理人", with: "agent")
+}
+
 func md5Hex(_ s: String) -> String {
     Insecure.MD5.hash(data: Data(s.utf8)).map { String(format: "%02x", $0) }.joined()
 }
@@ -1497,7 +1505,7 @@ final class WidgetController: NSObject {
     private func translateLines(_ lines: [String], _ done: @escaping ([String]) -> Void) {
         guard !cfg.key.isEmpty, !lines.isEmpty else { done([]); return }
         let joined = lines.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
-        let prompt = "Translate these research article titles from English to Chinese. Keep product names like Claude in English. Output only the translations, one per line, keeping the same numbering."
+        let prompt = "Translate these research article titles from English to Chinese. Keep product names like Claude and the word agent(s) in English. Output only the translations, one per line, keeping the same numbering."
         let body: [String: Any] = [
             "model": "glm-4-flash",
             "messages": [["role": "user", "content": prompt + "\n" + joined]],
@@ -1514,7 +1522,7 @@ final class WidgetController: NSObject {
                 for line in content.components(separatedBy: "\n") {
                     if let m = firstMatch(line, "^\\s*(\\d+)[\\.、]\\s*(.+)$"),
                        let i = Int(m[0]), i >= 1, i <= lines.count {
-                        out[i - 1] = m[1].trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "克劳德", with: "Claude")
+                        out[i - 1] = keepEnglishTerms(m[1].trimmingCharacters(in: .whitespaces))
                     }
                 }
                 done(out)
