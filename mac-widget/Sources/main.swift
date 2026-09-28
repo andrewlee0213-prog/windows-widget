@@ -581,6 +581,9 @@ final class WidgetController: NSObject {
     var dockSide = ""      // "" | "L" | "R" | "T"
     var dockHidden = false
     var hideTimer: Timer?
+    var dwellTimer: Timer?      // 贴边隐藏: 悬停驻留计时, 防边缘掠过误弹出
+    var dockPollTimer: Timer?   // 滑出后的鼠标位置兜底轮询
+    var dockPollOut = 0
     var menuTop: NSMenuItem!
     var menuDock: NSMenuItem!
     var pullTab: NSView!
@@ -783,18 +786,13 @@ final class WidgetController: NSObject {
         root.outer.addArrangedSubview(cardRP)
         cardRP.widthAnchor.constraint(equalTo: root.outer.widthAnchor).isActive = true
 
-        // 角标 + 页脚
+        // 角标 (贴边隐藏时露出的小拉手, frame 定位见 updateTab)
         pullTab = NSView()
-        pullTab.translatesAutoresizingMaskIntoConstraints = false
         pullTab.wantsLayer = true
         pullTab.layer?.backgroundColor = C(0x5B9DFF).cgColor
         pullTab.layer?.cornerRadius = 3
         pullTab.isHidden = true
         root.addSubview(pullTab)
-        NSLayoutConstraint.activate([
-            pullTab.widthAnchor.constraint(equalToConstant: 6),
-            pullTab.heightAnchor.constraint(equalToConstant: 64),
-        ])
 
         let footer = L("拖动移动 · 右键菜单", 10, .regular, C(0xFFFFFF, 0.85))
         let fr = hRow(0)
@@ -967,9 +965,9 @@ final class WidgetController: NSObject {
     private func hiddenFrame(for s: String, screen scr: NSScreen) -> NSRect {
         var f = panel.frame
         switch s {
-        case "L": f.origin.x = scr.frame.minX - f.width + 22
-        case "R": f.origin.x = scr.frame.maxX - 22
-        case "T": f.origin.y = scr.frame.maxY - 22
+        case "L": f.origin.x = scr.frame.minX - f.width + 12
+        case "R": f.origin.x = scr.frame.maxX - 12
+        case "T": f.origin.y = scr.frame.maxY - 12
         default: break
         }
         return f
@@ -989,6 +987,7 @@ final class WidgetController: NSObject {
     func hideDock() {
         guard !dockSide.isEmpty, let scr = screenOf() else { return }
         dockHidden = true
+        dockPollTimer?.invalidate()
         updateTab()
         animateTo(hiddenFrame(for: dockSide, screen: scr))
     }
@@ -1016,6 +1015,8 @@ final class WidgetController: NSObject {
         dockEnabled = false
         menuDock.state = .off
         pullTab.isHidden = true
+        dockPollTimer?.invalidate()
+        cancelDwellTimer()
         if let scr = screenOf() {
             var f = panel.frame
             f.origin.x = min(max(f.origin.x, scr.frame.minX), scr.frame.maxX - f.width)
@@ -1028,24 +1029,36 @@ final class WidgetController: NSObject {
     private func updateTab() {
         pullTab.isHidden = !(dockEnabled && dockHidden)
         guard !pullTab.isHidden else { return }
+        // frame 定位 ( translatesAutoresizingMask 已关约束 ): 角标要落在贴边后露出的 12px 窄条内
+        pullTab.translatesAutoresizingMaskIntoConstraints = true
+        pullTab.frame.size = NSSize(width: 6, height: 64)
         let bb = root.bounds
         switch dockSide {
         case "L":
-            pullTab.frame.origin = NSPoint(x: bb.width - 14 - 6, y: bb.height / 2 - 32)
+            pullTab.frame.origin = NSPoint(x: bb.width - 9, y: bb.height / 2 - 32)
         case "R":
-            pullTab.frame.origin = NSPoint(x: 14, y: bb.height / 2 - 32)
+            pullTab.frame.origin = NSPoint(x: 3, y: bb.height / 2 - 32)
         case "T":
-            pullTab.frame.origin = NSPoint(x: bb.width / 2 - 3, y: 12)
+            pullTab.frame.origin = NSPoint(x: bb.width / 2 - 3, y: 3)
         default: break
         }
     }
 
     func mouseEnteredCard() {
         cancelHideTimer()
-        if dockEnabled && dockHidden { showDock() }
+        cancelDwellTimer()
+        guard dockEnabled, dockHidden else { return }
+        // 驻留 0.25s 才滑出: 掠过屏幕边缘(滚动条/通知中心手势/触发角)不会把挂件带出来, 点一下仍立即展开
+        dwellTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: false) { [weak self] _ in
+            guard let self, self.dockEnabled, self.dockHidden else { return }
+            guard self.panel.frame.contains(NSEvent.mouseLocation) else { return }
+            self.showDock()
+            self.startDockPoll()
+        }
     }
 
     func mouseExitedCard() {
+        cancelDwellTimer()
         guard dockEnabled else { return }
         cancelHideTimer()
         hideTimer = Timer.scheduledTimer(withTimeInterval: 0.7, repeats: false) { [weak self] _ in
@@ -1059,6 +1072,33 @@ final class WidgetController: NSObject {
     private func cancelHideTimer() {
         hideTimer?.invalidate()
         hideTimer = nil
+    }
+
+    // 滑出后的兜底轮询: 手势切空间等场景 mouseExited 事件会丢, 挂件就一直摊在外面; 每秒查一次,
+    // 连续 2 次鼠标都不在窗口内就收回
+    private func startDockPoll() {
+        dockPollTimer?.invalidate()
+        dockPollOut = 0
+        dockPollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self, self.dockEnabled, !self.dockHidden else {
+                self?.dockPollTimer?.invalidate()
+                return
+            }
+            if self.panel.frame.contains(NSEvent.mouseLocation) {
+                self.dockPollOut = 0
+            } else {
+                self.dockPollOut += 1
+                if self.dockPollOut >= 2 {
+                    self.dockPollOut = 0
+                    self.hideDock()
+                }
+            }
+        }
+    }
+
+    private func cancelDwellTimer() {
+        dwellTimer?.invalidate()
+        dwellTimer = nil
     }
 
     // ---- GLM ----
