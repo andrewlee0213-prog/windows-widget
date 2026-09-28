@@ -67,6 +67,8 @@ mac-widget/
 
 单线程事件模型：所有网络请求走 URLSession 后台回调，UI 只在主线程更新（等价 Windows 版"UI 线程零网络等待"）。各板块独立定时器 + 失败语义分级（网络超时快速重试 / Cookie 失效提示换 Cookie / 接口错误保留旧值）。数据持久化在 `~/Library/Application Support/GLMWidget/`（bili-data.json / anthropic-cache.json / position.json / widget.log）。
 
+**网络按源分流**：本机开着系统代理（如 V2RayU）时，部分国内站点的分流规则可能把请求甩给远端节点导致超时（实测 cngold.org 中招）。因此国内源（GLM / 油价 / B站 / 翻译接口）一律**直连优先、失败回退代理**，境外源（anthropic.com）**代理优先、失败回退直连**——代理开关状态不影响四个板块可用性。GLM 卡的"缓存命中率"从本机 ZCode 调用记录（`~/.zcode/cli/db/db.sqlite`）聚合，GLM 官方接口不提供该指标。
+
 ## 卸载
 
 ```bash
