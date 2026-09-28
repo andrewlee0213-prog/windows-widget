@@ -5,6 +5,7 @@
 
 import AppKit
 import CryptoKit
+import SQLite3
 import Darwin
 
 // MARK: - 基础工具
@@ -514,6 +515,7 @@ final class WidgetController: NSObject {
     var pW: NSTextField!
     var rW: NSTextField!
     var creditsL: NSTextField!
+    var hitL: NSTextField!
     var glmLimits: [GLMLimit]?
     var glmLevel = "Pro"
     var glmError = false
@@ -590,6 +592,7 @@ final class WidgetController: NSObject {
         DispatchQueue.main.async { self.refreshHeight() }
 
         // GLM: 立即取数 + 定时
+        updateHitRate()
         if cfg.key.isEmpty {
             updGLM.stringValue = "未配置 API Key"
         } else {
@@ -689,6 +692,8 @@ final class WidgetController: NSObject {
         (barW, pW, rW) = quotaRow("本周")
         creditsL = L("", 10, .regular, C(0xFFFFFF, 0.85))
         cardGLM.add(creditsL, stretch: false)
+        hitL = L("", 10, .regular, C(0xFFFFFF, 0.85))
+        cardGLM.add(hitL, stretch: false)
         root.outer.addArrangedSubview(cardGLM)
         cardGLM.widthAnchor.constraint(equalTo: root.outer.widthAnchor).isActive = true
 
@@ -1127,6 +1132,51 @@ final class WidgetController: NSObject {
                 credits = "5h剩\(Int(fr))/\(Int(fu)) · 本周剩\(Int(wr))/\(Int(wu))"
             }
             creditsL.stringValue = credits
+        }
+        updateHitRate()
+    }
+
+    // 缓存命中率: ZCode 本地调用记录里聚合 (GLM 官方接口不暴露该指标)
+    static func queryHitRate() -> (Double, Double)? {
+        var db: OpaquePointer?
+        let path = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".zcode/cli/db/db.sqlite").path
+        guard sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            if db != nil { sqlite3_close(db) }
+            return nil
+        }
+        defer { sqlite3_close(db) }
+        func hit(sinceMs: Int64?) -> Double? {
+            var stmt: OpaquePointer?
+            let sql = sinceMs == nil
+                ? "SELECT 100.0*SUM(cache_read_input_tokens)/SUM(input_tokens) FROM model_usage WHERE input_tokens>0"
+                : "SELECT 100.0*SUM(cache_read_input_tokens)/SUM(input_tokens) FROM model_usage WHERE input_tokens>0 AND started_at > ?"
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+            defer { sqlite3_finalize(stmt) }
+            if let ms = sinceMs { sqlite3_bind_int64(stmt, 1, ms) }
+            guard sqlite3_step(stmt) == SQLITE_ROW, sqlite3_column_type(stmt, 0) != SQLITE_NULL else { return nil }
+            return sqlite3_column_double(stmt, 0)
+        }
+        guard let day = hit(sinceMs: Int64(Date().timeIntervalSince1970 - 86400) * 1000),
+              let all = hit(sinceMs: nil) else { return nil }
+        return (day, all)
+    }
+
+    private var lastHitText = ""
+    func updateHitRate() {
+        DispatchQueue.global(qos: .utility).async {
+            let r = Self.queryHitRate()
+            DispatchQueue.main.async {
+                let txt: String
+                if let (day, all) = r {
+                    txt = String(format: "缓存命中率 近24h %.1f%% · 累计 %.1f%%", day, all)
+                } else {
+                    txt = ""   // 找不到 ZCode 记录就整行隐藏
+                }
+                guard txt != self.lastHitText else { return }
+                self.lastHitText = txt
+                self.hitL.stringValue = txt
+                self.refreshHeight()
+            }
         }
     }
 
