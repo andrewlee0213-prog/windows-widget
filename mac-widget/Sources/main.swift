@@ -202,6 +202,7 @@ struct OilInfo {
     var price = ""
     var note = ""
     var next = ""
+    var win: (Int, Int)?   // 下次调价窗口 (月, 日), 用于过期判定与刷新节奏
 }
 
 struct BiliItem: Codable {
@@ -548,6 +549,7 @@ final class WidgetController: NSObject {
     var oilNote: NSTextField!
     var oilNext: NSTextField!
     var oilInfo: OilInfo?
+    var lastOilWin: (Int, Int)?   // 当前展示的"下次调价"行的窗口日期 (保留旧内容前先验是否过期)
     var oilBusy = false
 
     // B站
@@ -1279,31 +1281,40 @@ final class WidgetController: NSObject {
                 return
             }
             httpGet(u2, headers: ["User-Agent": chromeUA], timeout: 12) { d2, _ in
-                let finishInfo = { (next: String) in
+                let finishInfo = { (next: String, win: (Int, Int)?) in
                     DispatchQueue.main.async {
                         self.oilBusy = false
                         info.next = next
+                        info.win = win
                         done(info)
                     }
                 }
-                guard let d2, let h2 = String(data: d2, encoding: .utf8) else { finishInfo(""); return }
-                // 首页预测标题: 今日(9月24日)油价预计上调450元/吨 —— 标题里的日期就是下次调价窗口日
-                var forecastDate = ""
+                guard let d2, let h2 = String(data: d2, encoding: .utf8) else { finishInfo("", nil); return }
+                // 首页"今日(M月D日)油价预计…"标题每天都有, 日期只是当天, 不是调价窗口日 —— 只取方向和幅度
                 var dirn = ""
                 var amt = ""
-                if let mm = firstMatch(h2, "今日\\((\\d{1,2}月\\d{1,2}日)\\)油价预计(上调|下调|搁浅)(\\d+)?元/吨") {
-                    forecastDate = mm[0]; dirn = mm[1]; amt = mm[2]
+                if let mm = firstMatch(h2, "今日\\(\\d{1,2}月\\d{1,2}日\\)油价预计(上调|下调|搁浅)(\\d+)?元/吨") {
+                    dirn = mm[0]; amt = mm[1]
                 }
-                var win2 = forecastDate.isEmpty ? "" : forecastDate + "24时"
                 var range: (String, String, String)?
                 guard let ma = firstMatch(h2, "<a href=\"([^\"]+)\"[^>]*title=\"油价调整最新消息"),
                       let artURL = URL(string: ma[0]) else {
-                    finishInfo(self.forecastText(dirn, amt, range)); return
+                    finishInfo(self.forecastText(dirn, amt, range), nil); return
                 }
                 httpGet(artURL, headers: ["User-Agent": chromeUA], timeout: 12) { d3, _ in
+                    var win2 = ""
                     if let d3, let art = String(data: d3, encoding: .utf8) {
+                        var desc = ""
+                        if let md = firstMatch(art, "<meta name=\"description\" content=\"([^\"]+)\"") {
+                            desc = md[0]
+                            if let rg = firstMatch(desc, "(上涨|下跌)([\\d.]+)元(?:/升)?-([\\d.]+)元/升") {
+                                range = (rg[0], rg[1], rg[2])
+                            }
+                            // 真正的下一轮窗口日: "调价窗口将于X月X日24时进行"
+                            if let mw = firstMatch(desc, "将于(\\d{1,2}月\\d{1,2}日24时)") { win2 = mw[0] }
+                        }
                         if win2.isEmpty {
-                            // 文章兜底: 正文开头常是上一期已过窗口, 取第一个"今天及以后"的日期
+                            // 兜底: 正文里第一个"今天及以后"的窗口日期 (历史窗口已过期会被滤掉)
                             for w in allMatches(art, "(\\d{1,2})月(\\d{1,2})日24时") {
                                 if let m = Int(w[0]), let dd = Int(w[1]), self.isUpcoming(month: m, day: dd) {
                                     win2 = "\(m)月\(dd)日24时"
@@ -1311,16 +1322,18 @@ final class WidgetController: NSObject {
                                 }
                             }
                         }
-                        if let md = firstMatch(art, "<meta name=\"description\" content=\"([^\"]+)\""),
-                           let rg = firstMatch(md[0], "(上涨|下跌)([\\d.]+)元(?:/升)?-([\\d.]+)元/升") {
-                            range = (rg[0], rg[1], rg[2])
-                        }
+                    }
+                    var win: (Int, Int)?
+                    if let wm = firstMatch(win2, "(\\d{1,2})月(\\d{1,2})日"), let m = Int(wm[0]), let dd = Int(wm[1]) {
+                        win = (m, dd)
                     }
                     var line = ""
-                    if !win2.isEmpty { line = "下次调价 " + win2 }
+                    if !win2.isEmpty, let win, self.isUpcoming(month: win.0, day: win.1) {
+                        line = "下次调价 " + win2   // 窗口日已过就不再展示 (网站数据滞后中)
+                    }
                     let ftxt = self.forecastText(dirn, amt, range)
                     if !ftxt.isEmpty { line += (line.isEmpty ? "" : " · ") + ftxt }
-                    finishInfo(line)
+                    finishInfo(line, win)
                 }
             }
         }
@@ -1355,10 +1368,25 @@ final class WidgetController: NSObject {
             oilInfo = info
             oilPrice.stringValue = info.price
             oilNote.stringValue = info.note
-            if !info.next.isEmpty { oilNext.stringValue = info.next }   // 预估标题消失时保留上次内容 (独立降级)
+            oilNote.textColor = C(0xFFFFFF, 0.85)
+            var expired = false
+            if let w = info.win { expired = !isUpcoming(month: w.0, day: w.1) }
+            if !info.next.isEmpty, !expired {
+                oilNext.stringValue = info.next
+                lastOilWin = info.win
+            } else if let lw = lastOilWin, isUpcoming(month: lw.0, day: lw.1) {
+                // 新数据没带窗口信息: 旧窗口还没过期就保留 (独立降级)
+            } else {
+                oilNext.stringValue = ""   // 过期的"下次调价"不再展示
+                lastOilWin = nil
+            }
             updOil.stringValue = fmtHM.string(from: Date()) + " 更新"
             updOil.textColor = C(0xFFFFFF, 0.80)
-            oilTimer24h()
+            if expired {
+                oilTimer2h()   // 窗口已过而网站数据还没刷新, 2小时后重试 (调价生效期)
+            } else {
+                oilTimer24h()
+            }
         } else {
             oilNote.stringValue = "取价失败"
             oilNote.textColor = C(0xF85149)
@@ -1369,6 +1397,12 @@ final class WidgetController: NSObject {
 
     private func oilTimer24h() {
         Timer.scheduledTimer(withTimeInterval: 24 * 3600, repeats: false) { [weak self] _ in
+            self?.fetchOil { ok in self?.applyOilResult(ok) }
+        }
+    }
+
+    private func oilTimer2h() {
+        Timer.scheduledTimer(withTimeInterval: 2 * 3600, repeats: false) { [weak self] _ in
             self?.fetchOil { ok in self?.applyOilResult(ok) }
         }
     }
@@ -1789,13 +1823,7 @@ final class WidgetController: NSObject {
         setRp(2, "上海油价 · 刷新中…", C(0xEAF2FB))
         fetchOil { info in
             if let info {
-                self.oilInfo = info
-                self.oilPrice.stringValue = info.price
-                self.oilNote.stringValue = info.note
-                self.oilNote.textColor = C(0xFFFFFF, 0.85)
-                self.oilNext.stringValue = info.next
-                self.updOil.stringValue = "\(fmtHM.string(from: Date())) 更新"
-                self.updOil.textColor = C(0xFFFFFF, 0.80)
+                self.applyOilResult(info)   // 与自动刷新共用同一套展示/过期/保留逻辑
                 self.setRp(2, "上海油价 ✓ \(info.price)元/升", C(0x3FB950))
             } else {
                 self.setRp(2, "上海油价 ✗ 失败,保留旧值", C(0xF85149))
